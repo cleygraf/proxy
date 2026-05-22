@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/git-pkgs/proxy/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestGradleBuildCacheHandler_PutGetHead(t *testing.T) {
@@ -225,5 +228,58 @@ func TestGradleBuildCacheHandler_PutTooLarge(t *testing.T) {
 
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("PUT status = %d, want %d", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestGradleBuildCacheHandler_RecordsMetrics(t *testing.T) {
+	proxy, _, _, _ := setupTestProxy(t)
+	h := NewGradleBuildCacheHandler(proxy)
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	hitsBefore := testutil.ToFloat64(metrics.CacheHits.WithLabelValues("gradle"))
+	missesBefore := testutil.ToFloat64(metrics.CacheMisses.WithLabelValues("gradle"))
+
+	key := "metrics-key"
+	putReq, err := http.NewRequest(http.MethodPut, srv.URL+"/"+key, strings.NewReader("payload"))
+	if err != nil {
+		t.Fatalf("failed to create PUT request: %v", err)
+	}
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT request failed: %v", err)
+	}
+	_ = putResp.Body.Close()
+
+	getResp, err := http.Get(srv.URL + "/" + key)
+	if err != nil {
+		t.Fatalf("GET request failed: %v", err)
+	}
+	_ = getResp.Body.Close()
+
+	headReq, err := http.NewRequest(http.MethodHead, srv.URL+"/"+key, nil)
+	if err != nil {
+		t.Fatalf("failed to create HEAD request: %v", err)
+	}
+	headResp, err := http.DefaultClient.Do(headReq)
+	if err != nil {
+		t.Fatalf("HEAD request failed: %v", err)
+	}
+	_ = headResp.Body.Close()
+
+	missResp, err := http.Get(srv.URL + "/missing-key")
+	if err != nil {
+		t.Fatalf("GET miss request failed: %v", err)
+	}
+	_ = missResp.Body.Close()
+
+	hitsAfter := testutil.ToFloat64(metrics.CacheHits.WithLabelValues("gradle"))
+	missesAfter := testutil.ToFloat64(metrics.CacheMisses.WithLabelValues("gradle"))
+
+	if diff := hitsAfter - hitsBefore; diff != 2 {
+		t.Fatalf("cache hits delta = %.0f, want 2", diff)
+	}
+	if diff := missesAfter - missesBefore; diff != 1 {
+		t.Fatalf("cache misses delta = %.0f, want 1", diff)
 	}
 }
