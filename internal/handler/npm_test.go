@@ -2,13 +2,16 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/git-pkgs/cooldown"
+	"github.com/git-pkgs/registries/fetch"
 )
 
 const testVersion100 = "1.0.0"
@@ -180,6 +183,76 @@ func TestNPMHandlerMetadataProxy(t *testing.T) {
 
 	if tarball != "http://proxy.local/npm/testpkg/-/testpkg-1.0.0.tgz" {
 		t.Errorf("tarball URL not rewritten correctly: %s", tarball)
+	}
+}
+
+func TestNewNPMHandlerUsesCustomUpstream(t *testing.T) {
+	h := NewNPMHandler(testProxy(), "http://proxy.local", "https://firewall.example/npm/")
+
+	if h.upstreamURL != "https://firewall.example/npm" {
+		t.Fatalf("upstreamURL = %q, want %q", h.upstreamURL, "https://firewall.example/npm")
+	}
+}
+
+func TestNPMHandlerMetadataUsesConfiguredUpstreamAuth(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Basic test-token" {
+			t.Fatalf("Authorization = %q, want %q", got, "Basic test-token")
+		}
+		if r.URL.Path != "/testpkg" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"name": "testpkg",
+			"versions": {
+				"1.0.0": {
+					"name": "testpkg",
+					"version": "1.0.0",
+					"dist": {"tarball": "https://registry.npmjs.org/testpkg/-/testpkg-1.0.0.tgz"}
+				}
+			}
+		}`))
+	}))
+	defer upstream.Close()
+
+	proxy := testProxy()
+	proxy.AuthForURL = func(url string) (string, string) {
+		if strings.HasPrefix(url, upstream.URL) {
+			return "Authorization", "Basic test-token"
+		}
+		return "", ""
+	}
+	h := NewNPMHandler(proxy, "http://proxy.local", upstream.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/testpkg", nil)
+	w := httptest.NewRecorder()
+	h.handlePackageMetadata(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+func TestNPMHandlerDownloadUsesConfiguredUpstream(t *testing.T) {
+	proxy, _, _, fetcher := setupTestProxy(t)
+	fetcher.artifact = &fetch.Artifact{
+		Body:        io.NopCloser(strings.NewReader("tarball")),
+		ContentType: "application/octet-stream",
+	}
+	h := NewNPMHandler(proxy, "http://proxy.local", "https://firewall.example/npm/")
+
+	req := httptest.NewRequest(http.MethodGet, "/left-pad/-/left-pad-1.3.0.tgz", nil)
+	w := httptest.NewRecorder()
+	h.handleDownload(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	want := "https://firewall.example/npm/left-pad/-/left-pad-1.3.0.tgz"
+	if fetcher.fetchedURL != want {
+		t.Fatalf("fetchedURL = %q, want %q", fetcher.fetchedURL, want)
 	}
 }
 

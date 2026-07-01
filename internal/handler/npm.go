@@ -27,10 +27,15 @@ type NPMHandler struct {
 }
 
 // NewNPMHandler creates a new npm protocol handler.
-func NewNPMHandler(proxy *Proxy, proxyURL string) *NPMHandler {
+func NewNPMHandler(proxy *Proxy, proxyURL string, upstreamURL ...string) *NPMHandler {
+	configuredUpstream := npmUpstream
+	if len(upstreamURL) > 0 && upstreamURL[0] != "" {
+		configuredUpstream = upstreamURL[0]
+	}
+
 	return &NPMHandler{
 		proxy:       proxy,
-		upstreamURL: npmUpstream,
+		upstreamURL: strings.TrimSuffix(configuredUpstream, "/"),
 		proxyURL:    strings.TrimSuffix(proxyURL, "/"),
 	}
 }
@@ -263,7 +268,8 @@ func (h *NPMHandler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	h.proxy.Logger.Info("npm download request",
 		"package", packageName, "version", version, "filename", filename)
 
-	result, err := h.proxy.GetOrFetchArtifact(r.Context(), "npm", packageName, version, filename)
+	downloadURL := fmt.Sprintf("%s/%s/-/%s", h.upstreamURL, url.PathEscape(packageName), filename)
+	result, err := h.proxy.GetOrFetchArtifactFromURL(r.Context(), "npm", packageName, version, filename, downloadURL)
 	if err != nil {
 		h.proxy.Logger.Error("failed to get artifact", "error", err)
 		JSONError(w, http.StatusBadGateway, "failed to fetch package")

@@ -58,9 +58,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/git-pkgs/cooldown"
 	swaggerdoc "github.com/git-pkgs/proxy/docs/swagger"
 	"github.com/git-pkgs/proxy/internal/config"
-	"github.com/git-pkgs/cooldown"
 	"github.com/git-pkgs/proxy/internal/database"
 	"github.com/git-pkgs/proxy/internal/enrichment"
 	"github.com/git-pkgs/proxy/internal/handler"
@@ -84,12 +84,12 @@ const (
 
 // Server is the main proxy server.
 type Server struct {
-	cfg       *config.Config
-	db        *database.DB
-	storage   storage.Storage
-	logger    *slog.Logger
-	http      *http.Server
-	templates *Templates
+	cfg         *config.Config
+	db          *database.DB
+	storage     storage.Storage
+	logger      *slog.Logger
+	http        *http.Server
+	templates   *Templates
 	cancel      context.CancelFunc
 	healthCache *healthCache
 }
@@ -175,6 +175,7 @@ func (s *Server) Start() error {
 	proxy.DirectServe = s.cfg.Storage.DirectServe
 	proxy.DirectServeTTL = s.cfg.ParseDirectServeTTL()
 	proxy.DirectServeBaseURL = s.cfg.Storage.DirectServeBaseURL
+	proxy.AuthForURL = s.authForURL
 
 	// Create router with Chi
 	r := chi.NewRouter()
@@ -195,7 +196,7 @@ func (s *Server) Start() error {
 	})
 
 	// Mount protocol handlers
-	npmHandler := handler.NewNPMHandler(proxy, s.cfg.BaseURL)
+	npmHandler := handler.NewNPMHandler(proxy, s.cfg.BaseURL, s.cfg.Upstream.NPM)
 	cargoHandler := handler.NewCargoHandler(proxy, s.cfg.BaseURL)
 	gemHandler := handler.NewGemHandler(proxy, s.cfg.BaseURL)
 	goHandler := handler.NewGoHandler(proxy, s.cfg.BaseURL)

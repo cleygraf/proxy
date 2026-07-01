@@ -96,6 +96,7 @@ type Proxy struct {
 	// storage at an internal one.
 	DirectServeBaseURL string
 	HTTPClient         *http.Client
+	AuthForURL         func(string) (string, string)
 }
 
 // NewProxy creates a new Proxy with the given dependencies.
@@ -546,6 +547,11 @@ func (p *Proxy) fetchUpstreamMetadata(ctx context.Context, upstreamURL string, e
 		return nil, "", "", zeroTime, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Accept", accept)
+	if p.AuthForURL != nil {
+		if name, value := p.AuthForURL(upstreamURL); name != "" && value != "" {
+			req.Header.Set(name, value)
+		}
+	}
 
 	if entry != nil && entry.ETag.Valid {
 		req.Header.Set("If-None-Match", entry.ETag.String)
