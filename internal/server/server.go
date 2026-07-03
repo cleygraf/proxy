@@ -202,7 +202,7 @@ func (s *Server) Start() error {
 	goHandler := handler.NewGoHandler(proxy, s.cfg.BaseURL)
 	hexHandler := handler.NewHexHandler(proxy, s.cfg.BaseURL)
 	pubHandler := handler.NewPubHandler(proxy, s.cfg.BaseURL)
-	pypiHandler := handler.NewPyPIHandler(proxy, s.cfg.BaseURL)
+	pypiHandler := handler.NewPyPIHandler(proxy, s.cfg.BaseURL, s.cfg.Upstream.PyPI)
 	mavenHandler := handler.NewMavenHandler(
 		proxy,
 		s.cfg.BaseURL,

@@ -254,6 +254,10 @@ type UpstreamConfig struct {
 	// Default: https://repo1.maven.org/maven2
 	Maven string `json:"maven" yaml:"maven"`
 
+	// PyPI is the upstream PyPI registry URL.
+	// Default: https://pypi.org
+	PyPI string `json:"pypi" yaml:"pypi"`
+
 	// GradlePluginPortal is the upstream Gradle Plugin Portal Maven URL.
 	// Used to resolve Gradle plugin marker artifacts.
 	// Default: https://plugins.gradle.org/m2

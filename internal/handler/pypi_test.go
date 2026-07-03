@@ -147,6 +147,40 @@ func TestPyPIHandler_DownloadUpstreamURL(t *testing.T) {
 	}
 }
 
+func TestPyPIHandler_CustomUpstreamDownloadURL(t *testing.T) {
+	proxy, _, _, fetcher := setupTestProxy(t)
+	fetcher.artifact = &fetch.Artifact{
+		Body:        io.NopCloser(strings.NewReader("wheel data")),
+		ContentType: "application/octet-stream",
+	}
+
+	h := NewPyPIHandler(proxy, "http://localhost", "https://firewall.sonatype.app/pypi/")
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/packages/packages/ab/cd/ef0123456789/python_policy_demo-1.1.0-py3-none-any.whl")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	want := "https://firewall.sonatype.app/pypi/packages/ab/cd/ef0123456789/python_policy_demo-1.1.0-py3-none-any.whl"
+	if fetcher.fetchedURL != want {
+		t.Errorf("upstream URL = %q, want %q", fetcher.fetchedURL, want)
+	}
+}
+
+func TestPyPIHandler_ProxyPackagePathCustomUpstream(t *testing.T) {
+	h := NewPyPIHandler(nil, "http://localhost", "https://firewall.sonatype.app/pypi/")
+	got, ok := h.proxyPackagePath("https://firewall.sonatype.app/pypi/packages/ab/cd/file.whl#sha256=123")
+	if !ok {
+		t.Fatal("expected package URL to be recognized")
+	}
+	if got != "packages/ab/cd/file.whl" {
+		t.Fatalf("proxy package path = %q", got)
+	}
+}
+
 func TestPyPIHandler_DownloadCacheHit(t *testing.T) {
 	proxy, db, store, _ := setupTestProxy(t)
 	seedPackage(t, db, store, "pypi", "requests", "2.31.0",

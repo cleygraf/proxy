@@ -32,10 +32,15 @@ type PyPIHandler struct {
 }
 
 // NewPyPIHandler creates a new PyPI protocol handler.
-func NewPyPIHandler(proxy *Proxy, proxyURL string) *PyPIHandler {
+func NewPyPIHandler(proxy *Proxy, proxyURL string, upstreamURL ...string) *PyPIHandler {
+	configuredUpstream := pypiUpstream
+	if len(upstreamURL) > 0 && strings.TrimSpace(upstreamURL[0]) != "" {
+		configuredUpstream = upstreamURL[0]
+	}
+
 	return &PyPIHandler{
 		proxy:       proxy,
-		upstreamURL: pypiUpstream,
+		upstreamURL: strings.TrimSuffix(configuredUpstream, "/"),
 		proxyURL:    strings.TrimSuffix(proxyURL, "/"),
 	}
 }
@@ -174,9 +179,11 @@ func (h *PyPIHandler) rewriteSimpleHTML(body []byte, filteredVersions map[string
 		})
 	}
 
-	// Match href attributes pointing to packages
-	// PyPI URLs look like: https://files.pythonhosted.org/packages/...
-	re := regexp.MustCompile(`href="(https://files\.pythonhosted\.org/packages/[^"]+)"`)
+	// Match href attributes pointing to package files. PyPI URLs commonly use
+	// https://files.pythonhosted.org/packages/..., while registry managers such
+	// as Sonatype Firewall can return package links under the configured PyPI
+	// upstream, for example https://firewall.sonatype.app/pypi/packages/....
+	re := regexp.MustCompile(`href="(https://[^"]+/packages/[^"]+)"`)
 
 	return re.ReplaceAllFunc(body, func(match []byte) []byte {
 		submatch := re.FindSubmatch(match)
@@ -185,15 +192,36 @@ func (h *PyPIHandler) rewriteSimpleHTML(body []byte, filteredVersions map[string
 		}
 
 		origURL := string(submatch[1])
-
-		u, err := url.Parse(origURL)
-		if err != nil {
+		proxyPath, ok := h.proxyPackagePath(origURL)
+		if !ok {
 			return match
 		}
 
-		newURL := fmt.Sprintf("%s/pypi/packages%s", h.proxyURL, u.Path)
+		newURL := fmt.Sprintf("%s/pypi/packages/%s", h.proxyURL, proxyPath)
 		return []byte(fmt.Sprintf(`href="%s"`, newURL))
 	})
+}
+
+func (h *PyPIHandler) proxyPackagePath(origURL string) (string, bool) {
+	u, err := url.Parse(origURL)
+	if err != nil {
+		return "", false
+	}
+
+	if u.Scheme == "https" && u.Host == "files.pythonhosted.org" {
+		return strings.TrimPrefix(u.Path, "/"), true
+	}
+
+	upstream, err := url.Parse(h.upstreamURL)
+	if err != nil {
+		return "", false
+	}
+	packagePrefix := strings.TrimSuffix(upstream.Path, "/") + "/packages/"
+	if u.Scheme == upstream.Scheme && u.Host == upstream.Host && strings.HasPrefix(u.Path, packagePrefix) {
+		return "packages/" + strings.TrimPrefix(u.Path, packagePrefix), true
+	}
+
+	return "", false
 }
 
 // handleJSON serves the JSON API package metadata.
@@ -421,10 +449,14 @@ func (h *PyPIHandler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	h.proxy.Logger.Info("pypi download request",
 		"name", name, "version", version, "filename", filename)
 
-	// Construct upstream URL; the incoming path starts with
-	// '/packages' so there is no need to include it in the format
-	// string
+	// Construct upstream URL; the incoming path starts with "packages/". For the
+	// default PyPI upstream, artifact files live on files.pythonhosted.org. For a
+	// configured registry manager, request the artifact through that upstream so
+	// policy enforcement still applies to downloads.
 	upstreamURL := fmt.Sprintf("https://files.pythonhosted.org/%s", path)
+	if h.upstreamURL != pypiUpstream {
+		upstreamURL = fmt.Sprintf("%s/%s", h.upstreamURL, path)
+	}
 
 	result, err := h.proxy.GetOrFetchArtifactFromURL(r.Context(), "pypi", name, version, filename, upstreamURL)
 	if err != nil {
