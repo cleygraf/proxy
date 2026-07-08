@@ -63,6 +63,7 @@ import (
 	"github.com/git-pkgs/proxy/internal/config"
 	"github.com/git-pkgs/proxy/internal/database"
 	"github.com/git-pkgs/proxy/internal/enrichment"
+	"github.com/git-pkgs/proxy/internal/fetchcb"
 	"github.com/git-pkgs/proxy/internal/handler"
 	"github.com/git-pkgs/proxy/internal/metrics"
 	"github.com/git-pkgs/proxy/internal/mirror"
@@ -158,7 +159,9 @@ func New(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 func (s *Server) Start() error {
 	// Create shared components with circuit breaker
 	baseFetcher := fetch.NewFetcher(fetch.WithAuthFunc(s.authForURL))
-	fetcher := fetch.NewCircuitBreakerFetcher(baseFetcher)
+	// Policy-aware breaker: a 4xx policy block (e.g. Firewall 403) is a valid
+	// client response and must not trip the per-host breaker (see internal/fetchcb).
+	fetcher := fetchcb.New(baseFetcher)
 	resolver := fetch.NewResolver()
 	cd := &cooldown.Config{
 		Default:    s.cfg.Cooldown.Default,
