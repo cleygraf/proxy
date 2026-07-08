@@ -112,6 +112,22 @@ func (h *MavenHandler) handleDownload(w http.ResponseWriter, r *http.Request, ur
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		// A 403 from the upstream is a policy block (e.g. Sonatype Firewall
+		// quarantining a malicious component). Forward the upstream status and
+		// report body so the Maven client sees why the artifact was refused
+		// instead of an opaque 502 Bad Gateway.
+		if status, body, ok := UpstreamStatus(err); ok && status == http.StatusForbidden {
+			h.proxy.Logger.Warn("maven artifact blocked by upstream",
+				"group", group, "artifact", artifact, "version", version, "detail", body)
+			contentType := "application/json"
+			if !strings.HasPrefix(strings.TrimSpace(body), "{") {
+				contentType = "text/plain; charset=utf-8"
+			}
+			w.Header().Set("Content-Type", contentType)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(body))
+			return
+		}
 		h.proxy.Logger.Error("failed to get artifact", "error", err)
 		http.Error(w, "failed to fetch artifact", http.StatusBadGateway)
 		return

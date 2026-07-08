@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -445,6 +446,31 @@ func JSONError(w http.ResponseWriter, status int, message string) {
 
 // ErrUpstreamNotFound indicates the upstream returned 404.
 var ErrUpstreamNotFound = fmt.Errorf("upstream: not found")
+
+// upstreamStatusRe matches the error the fetch layer produces for an unexpected
+// upstream response: fmt.Errorf("unexpected status %d: %s", code, body).
+var upstreamStatusRe = regexp.MustCompile(`unexpected status (\d+): `)
+
+// UpstreamStatus recovers the HTTP status code and response body an upstream
+// returned, from an error produced by the fetch layer. It returns ok=false when
+// the error does not carry an upstream status (e.g. a transport error). This lets
+// handlers surface a meaningful upstream rejection (such as a Sonatype Firewall
+// 403 block) to the package-manager client instead of a generic 502.
+func UpstreamStatus(err error) (code int, body string, ok bool) {
+	if err == nil {
+		return 0, "", false
+	}
+	msg := err.Error()
+	loc := upstreamStatusRe.FindStringSubmatchIndex(msg)
+	if loc == nil {
+		return 0, "", false
+	}
+	code, convErr := strconv.Atoi(msg[loc[2]:loc[3]])
+	if convErr != nil {
+		return 0, "", false
+	}
+	return code, msg[loc[1]:], true
+}
 
 // errStale304 is returned when upstream sends 304 but the cached file is missing.
 var errStale304 = fmt.Errorf("upstream returned 304 but cached file is missing")
