@@ -526,7 +526,7 @@ func TestNuGetRoutes(t *testing.T) {
 
 func TestNewNuGetHandler(t *testing.T) {
 	proxy := nugetTestProxy()
-	h := NewNuGetHandler(proxy, "http://localhost:8080/")
+	h := NewNuGetHandler(proxy, "http://localhost:8080/", "")
 
 	if h.proxy != proxy {
 		t.Error("proxy not set correctly")
@@ -541,7 +541,7 @@ func TestNewNuGetHandler(t *testing.T) {
 
 func TestNewNuGetHandlerNoTrailingSlash(t *testing.T) {
 	proxy := nugetTestProxy()
-	h := NewNuGetHandler(proxy, "http://localhost:8080")
+	h := NewNuGetHandler(proxy, "http://localhost:8080", "")
 
 	if h.proxyURL != "http://localhost:8080" {
 		t.Errorf("proxyURL = %q, want %q", h.proxyURL, "http://localhost:8080")

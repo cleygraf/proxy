@@ -886,7 +886,7 @@ func TestNuGetHandler_DownloadCacheMiss(t *testing.T) {
 		ContentType: "application/octet-stream",
 	}
 
-	h := NewNuGetHandler(proxy, "http://localhost")
+	h := NewNuGetHandler(proxy, "http://localhost", "")
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 

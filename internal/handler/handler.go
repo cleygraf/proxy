@@ -480,7 +480,9 @@ func UpstreamStatus(err error) (code int, body string, ok bool) {
 // client sees the real 403 and reason instead of a generic 502 Bad Gateway.
 func (p *Proxy) serveUpstreamBlock(w http.ResponseWriter, err error) bool {
 	status, body, ok := UpstreamStatus(err)
-	if !ok || status != http.StatusForbidden {
+	// Sonatype Firewall quarantines a component with 403 (npm/Maven/PyPI) or 409
+	// (NuGet); both carry a human-readable report body.
+	if !ok || (status != http.StatusForbidden && status != http.StatusConflict) {
 		return false
 	}
 	p.Logger.Warn("artifact blocked by upstream policy", "status", status, "detail", body)
@@ -489,7 +491,7 @@ func (p *Proxy) serveUpstreamBlock(w http.ResponseWriter, err error) bool {
 		contentType = "application/json"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusForbidden)
+	w.WriteHeader(status)
 	_, _ = w.Write([]byte(body))
 	return true
 }

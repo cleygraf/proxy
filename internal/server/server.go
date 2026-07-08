@@ -213,7 +213,7 @@ func (s *Server) Start() error {
 		s.cfg.Upstream.GradlePluginPortal,
 	)
 	gradleHandler := handler.NewGradleBuildCacheHandler(proxy)
-	nugetHandler := handler.NewNuGetHandler(proxy, s.cfg.BaseURL)
+	nugetHandler := handler.NewNuGetHandler(proxy, s.cfg.BaseURL, s.cfg.Upstream.NuGet)
 	composerHandler := handler.NewComposerHandler(proxy, s.cfg.BaseURL)
 	conanHandler := handler.NewConanHandler(proxy, s.cfg.BaseURL)
 	condaHandler := handler.NewCondaHandler(proxy, s.cfg.BaseURL)

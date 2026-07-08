@@ -24,11 +24,26 @@ type NuGetHandler struct {
 }
 
 // NewNuGetHandler creates a new NuGet protocol handler.
-func NewNuGetHandler(proxy *Proxy, proxyURL string) *NuGetHandler {
+func NewNuGetHandler(proxy *Proxy, proxyURL, upstreamURL string) *NuGetHandler {
+	if strings.TrimSpace(upstreamURL) == "" {
+		upstreamURL = nugetUpstream
+	}
 	return &NuGetHandler{
 		proxy:       proxy,
-		upstreamURL: nugetUpstream,
+		upstreamURL: strings.TrimSuffix(upstreamURL, "/"),
 		proxyURL:    strings.TrimSuffix(proxyURL, "/"),
+	}
+}
+
+// applyUpstreamAuth adds configured upstream auth (e.g. Sonatype Firewall basic
+// auth) to a direct upstream request. The cached fetch paths already do this via
+// the auth-aware fetcher; the handler's direct HTTPClient.Do calls do not.
+func (h *NuGetHandler) applyUpstreamAuth(req *http.Request, url string) {
+	if h.proxy.AuthForURL == nil {
+		return
+	}
+	if name, value := h.proxy.AuthForURL(url); name != "" {
+		req.Header.Set(name, value)
 	}
 }
 
@@ -96,21 +111,34 @@ func (h *NuGetHandler) rewriteServiceIndex(body []byte) ([]byte, error) {
 		return body, nil
 	}
 
+	customUpstream := h.upstreamURL != nugetUpstream
+	kept := resources[:0]
 	for _, res := range resources {
 		rmap, ok := res.(map[string]any)
 		if !ok {
+			kept = append(kept, res)
 			continue
 		}
 
 		id, _ := rmap["@id"].(string)
 		rtype, _ := rmap["@type"].(string)
 
-		// Rewrite URLs for services we proxy
-		if id != "" && h.shouldRewriteService(rtype) {
-			newURL := h.rewriteNuGetURL(id)
-			rmap["@id"] = newURL
+		// We do not re-serve repository signatures for a custom upstream; drop the
+		// resource so the client does not require repository-signed packages.
+		if customUpstream && strings.HasPrefix(rtype, "RepositorySignatures") {
+			continue
 		}
+
+		// Rewrite URLs for services we proxy. For a custom upstream (e.g. Sonatype
+		// Firewall) also rewrite any other service under the upstream base, so the
+		// client never talks to the upstream directly.
+		if id != "" && (h.shouldRewriteService(rtype) ||
+			(customUpstream && strings.HasPrefix(id, h.upstreamURL+"/"))) {
+			rmap["@id"] = h.rewriteNuGetURL(id)
+		}
+		kept = append(kept, res)
 	}
+	index["resources"] = kept
 
 	return json.Marshal(index)
 }
@@ -139,7 +167,14 @@ func (h *NuGetHandler) shouldRewriteService(serviceType string) bool {
 
 // rewriteNuGetURL rewrites a NuGet API URL to point at this proxy.
 func (h *NuGetHandler) rewriteNuGetURL(origURL string) string {
-	// Map known NuGet API endpoints to our proxy paths
+	// A custom upstream (e.g. Sonatype Firewall) advertises every service URL
+	// under its own base; rewrite that base back to this proxy's /nuget/ path so
+	// the client keeps talking to us.
+	if h.upstreamURL != nugetUpstream && strings.HasPrefix(origURL, h.upstreamURL+"/") {
+		return h.proxyURL + "/nuget/" + strings.TrimPrefix(origURL, h.upstreamURL+"/")
+	}
+
+	// Map known api.nuget.org endpoints to our proxy paths
 	replacements := map[string]string{
 		"https://api.nuget.org/v3-flatcontainer/":            h.proxyURL + "/nuget/v3-flatcontainer/",
 		"https://api.nuget.org/v3/registration5-gz-semver2/": h.proxyURL + "/nuget/v3/registration5-gz-semver2/",
@@ -173,6 +208,7 @@ func (h *NuGetHandler) handleRegistration(w http.ResponseWriter, r *http.Request
 		return
 	}
 	req.Header.Set(headerAcceptEncoding, "gzip")
+	h.applyUpstreamAuth(req, upstreamURL)
 
 	resp, err := h.proxy.HTTPClient.Do(req)
 	if err != nil {
@@ -340,6 +376,7 @@ func (h *NuGetHandler) proxyUpstream(w http.ResponseWriter, r *http.Request) {
 	if ae := r.Header.Get(headerAcceptEncoding); ae != "" {
 		req.Header.Set(headerAcceptEncoding, ae)
 	}
+	h.applyUpstreamAuth(req, upstreamURL)
 
 	resp, err := h.proxy.HTTPClient.Do(req)
 	if err != nil {
@@ -363,9 +400,13 @@ func (h *NuGetHandler) proxyUpstream(w http.ResponseWriter, r *http.Request) {
 func (h *NuGetHandler) buildUpstreamURL(r *http.Request) string {
 	path := r.URL.Path
 
-	// Handle query and autocomplete which go to azuresearch
+	// Search/autocomplete live on a separate host for api.nuget.org, but under the
+	// same base for a custom upstream (e.g. Sonatype Firewall).
 	if strings.HasPrefix(path, "/query") || strings.HasPrefix(path, "/autocomplete") {
-		return "https://azuresearch-usnc.nuget.org" + path + "?" + r.URL.RawQuery
+		if h.upstreamURL == nugetUpstream {
+			return "https://azuresearch-usnc.nuget.org" + path + "?" + r.URL.RawQuery
+		}
+		return h.upstreamURL + path + "?" + r.URL.RawQuery
 	}
 
 	return h.upstreamURL + path

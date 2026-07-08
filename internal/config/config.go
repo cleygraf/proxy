@@ -258,6 +258,10 @@ type UpstreamConfig struct {
 	// Default: https://pypi.org
 	PyPI string `json:"pypi" yaml:"pypi"`
 
+	// NuGet is the upstream NuGet V3 base URL.
+	// Default: https://api.nuget.org
+	NuGet string `json:"nuget" yaml:"nuget"`
+
 	// GradlePluginPortal is the upstream Gradle Plugin Portal Maven URL.
 	// Used to resolve Gradle plugin marker artifacts.
 	// Default: https://plugins.gradle.org/m2
