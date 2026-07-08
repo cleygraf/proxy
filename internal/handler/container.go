@@ -117,6 +117,11 @@ func (h *ContainerHandler) handleBlobDownload(w http.ResponseWriter, r *http.Req
 	)
 
 	if err != nil {
+		if status, _, ok := UpstreamStatus(err); ok && status == http.StatusForbidden {
+			h.proxy.Logger.Warn("blob blocked by upstream policy", "name", name, "digest", digest)
+			h.containerError(w, http.StatusForbidden, "DENIED", "blocked by upstream policy")
+			return
+		}
 		h.proxy.Logger.Error("failed to fetch blob", "error", err)
 		h.containerError(w, http.StatusBadGateway, "BLOB_UNKNOWN", "failed to fetch blob")
 		return

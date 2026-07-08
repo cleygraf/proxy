@@ -472,6 +472,41 @@ func UpstreamStatus(err error) (code int, body string, ok bool) {
 	return code, msg[loc[1]:], true
 }
 
+// serveUpstreamBlock detects an upstream policy block (HTTP 403, e.g. a Sonatype
+// Firewall quarantine) recovered from an artifact-fetch error and, if present,
+// forwards that 403 and the upstream report body to the client. It returns true
+// when it has written the response. Adopting it in every artifact-download
+// handler keeps malicious-package blocking consistent across ecosystems: the
+// client sees the real 403 and reason instead of a generic 502 Bad Gateway.
+func (p *Proxy) serveUpstreamBlock(w http.ResponseWriter, err error) bool {
+	status, body, ok := UpstreamStatus(err)
+	if !ok || status != http.StatusForbidden {
+		return false
+	}
+	p.Logger.Warn("artifact blocked by upstream policy", "status", status, "detail", body)
+	contentType := "text/plain; charset=utf-8"
+	if strings.HasPrefix(strings.TrimSpace(body), "{") {
+		contentType = "application/json"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(body))
+	return true
+}
+
+// writeArtifactError writes the client response for an error from the artifact
+// fetch/cache path. An upstream policy block (403) is forwarded verbatim via
+// serveUpstreamBlock; anything else is logged and returned as 502 Bad Gateway
+// with genericMsg. Handlers that need a non-plain error body (npm JSON, OCI)
+// call serveUpstreamBlock directly instead.
+func (p *Proxy) writeArtifactError(w http.ResponseWriter, err error, genericMsg string) {
+	if p.serveUpstreamBlock(w, err) {
+		return
+	}
+	p.Logger.Error("failed to get artifact", "error", err)
+	http.Error(w, genericMsg, http.StatusBadGateway)
+}
+
 // errStale304 is returned when upstream sends 304 but the cached file is missing.
 var errStale304 = fmt.Errorf("upstream returned 304 but cached file is missing")
 
